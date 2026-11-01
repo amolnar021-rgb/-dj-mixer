@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DJ-мікшер для YouTube</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#15151c;--panel:#1e1e29;--text:#f1f1f6;--muted:#9496aa;--line:#2f2f42;--a:#ff7a3d;--b:#7b8cff;--on:#15151c;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:light){:root{--bg:#eeeef4;--panel:#fff;--text:#16161d;--muted:#5d5f74;--line:#d4d4e0;--a:#e85d1a;--b:#4a5be0;--on:#fff;color-scheme:light}}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Manrope,system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.4}
+.wrap{max-width:820px;margin:0 auto;padding:14px}
+h1{font-size:1.35rem;font-weight:800;margin:4px 0 12px;letter-spacing:-.01em}
+.pl{display:flex;gap:8px}
+.pl input{flex:1;min-width:0;min-height:44px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit}
+.grid{display:grid;gap:12px;grid-template-areas:"a" "m" "b";margin-top:12px}
+@media(min-width:760px){.grid{grid-template-columns:1fr 1fr;grid-template-areas:"a b" "m m"}}
+#da{grid-area:a}#db{grid-area:b}.mix{grid-area:m}
+.deck,.mix{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px}
+.deck{border-top:4px solid var(--c)}
+.deck header{display:flex;justify-content:space-between;gap:10px;align-items:baseline;margin-bottom:8px}
+.deck h2{margin:0;font-size:1.05rem;font-weight:800;color:var(--c);flex:none}
+.name{color:var(--muted);font-size:.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pw{aspect-ratio:16/9;background:#000;border-radius:10px;overflow:hidden}
+.pw iframe{width:100%;height:100%;display:block}
+.row{display:flex;gap:8px;margin:10px 0}
+button{font:inherit;font-weight:600;min-height:44px;padding:0 14px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer}
+button.play,#go{background:var(--c,var(--text));color:var(--on);border-color:var(--c,var(--text))}
+button.play{flex:1;font-size:1.1rem}
+#go{--c:var(--text)}
+button.on{background:var(--text);color:var(--on)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--c,var(--text));outline-offset:2px}
+input[type=range]{width:100%;accent-color:var(--c,var(--text));margin:0;min-height:28px}
+.time{font-variant-numeric:tabular-nums;color:var(--muted);font-size:.8rem;text-align:right}
+.ctl{display:grid;grid-template-columns:78px 1fr 52px;gap:8px;align-items:center;font-size:.85rem}
+.ctl span{color:var(--muted)}
+.ctl output{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.xf{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;font-weight:800}
+.xf .la{color:var(--a)}.xf .lb{color:var(--b)}
+#xf{height:44px}
+.mix .row button{flex:1}
+p.hint{color:var(--muted);font-size:.85rem;margin:8px 2px 0;min-height:1.2em}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>DJ-мікшер для YouTube</h1>
+<div class="pl"><input id="url" type="url" placeholder="Посилання на плейлист YouTube" aria-label="Посилання на плейлист"><button id="go">Завантажити</button></div>
+<p class="hint" id="msg" role="status">Плейлист має бути публічним або доступним за посиланням.</p>
+<div class="grid">
+<div id="da"></div>
+<div class="mix">
+<div class="xf"><span class="la">A</span><input type="range" id="xf" min="0" max="100" value="0" aria-label="Кроссфейдер"><span class="lb">B</span></div>
+<div class="row"><button id="mixbtn">Плавно перейти</button><button id="auto" aria-pressed="false">Автопілот</button></div>
+<div class="ctl"><span>Тривалість</span><input type="range" id="fs" min="3" max="20" step="1" value="8" aria-label="Тривалість переходу"><output id="fso">8 с</output></div>
+</div>
+<div id="db"></div>
+</div>
+</div>
+<script>
+const $=s=>document.querySelector(s),fmt=s=>{s=Math.floor(s||0);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
+const ctl=(l,k,mn,mx,st,v,u)=>`<div class="ctl"><span>${l}</span><input type="range" class="${k}" min="${mn}" max="${mx}" step="${st}" value="${v}" aria-label="${l}"><output>${v}${u}</output></div>`;
+const xfEl=$('#xf'),xv=()=>xfEl.value/100,fadeSec=()=>+$('#fs').value;
+const decks=[];let listId=null,fading=false,auto=false,fadeTimer=null;
+
+class Deck{
+  constructor(host,name,col,start){
+    this.start=start;this.vol=100;this.last=-1;this.ready=false;this.pendingPause=false;this.host=host;
+    host.className='deck';host.style.setProperty('--c',col);
+    host.innerHTML=`<header><h2>${name}</h2><span class="name">Порожньо</span></header>
+<div class="pw"><div style="color:#9496aa;padding:12px;font-size:.85rem">Плеєр завантажується…</div></div>
+<input type="range" class="seek" min="0" max="1000" value="0" aria-label="Позиція"><div class="time">0:00 / 0:00</div>
+<div class="row"><button class="prev" aria-label="Попередній трек">⏮</button><button class="play" aria-label="Грати">▶</button><button class="next" aria-label="Наступний трек">⏭</button></div>
+${ctl('Темп','tempo',0.5,1.5,0.25,1,'×')}${ctl('Гучність','vol',0,100,1,100,'')}`;
+    const q=this.q=s=>host.querySelector(s);
+    q('.play').onclick=()=>{if(!this.ready){$('#msg').textContent='YouTube ще не завантажився. Відкрийте сторінку з сайту (https://) і перевірте інтернет.';return}this.p.getPlayerState()===1?this.p.pauseVideo():this.p.playVideo()};
+    q('.prev').onclick=()=>this.ready&&this.p.previousVideo();
+    q('.next').onclick=()=>this.ready&&this.p.nextVideo();
+    q('.seek').oninput=e=>{if(!this.ready)return;const d=this.p.getDuration();if(d)this.p.seekTo(d*e.target.value/1000,true)};
+    q('.tempo').oninput=e=>{if(this.ready)this.p.setPlaybackRate(+e.target.value);e.target.nextElementSibling.textContent=e.target.value+'×'};
+    q('.vol').oninput=e=>{this.vol=+e.target.value;e.target.nextElementSibling.textContent=e.target.value};
+  }
+  attach(){
+    this.p=new YT.Player(this.q('.pw div'),{width:'100%',height:'100%',
+      playerVars:{playsinline:1,controls:0,rel:0,disablekb:1,modestbranding:1},
+      events:{onReady:()=>{this.ready=true;if(listId)this.load()},onStateChange:e=>this.st(e.data),onError:()=>this.p.nextVideo()}});
+  }
+  load(){this.p.cuePlaylist({listType:'playlist',list:listId,index:this.start})}
+  st(s){
+    const pb=this.q('.play');
+    if(s===1){pb.textContent='⏸';pb.setAttribute('aria-label','Пауза');if(this.pendingPause){this.pendingPause=false;this.p.pauseVideo()}}
+    else if(s===0||s===2||s===5){pb.textContent='▶';pb.setAttribute('aria-label','Грати')}
+    if(s===1||s===2||s===5){try{const t=this.p.getVideoData().title;if(t)this.q('.name').textContent=t}catch(e){}}
+  }
+}
+
+function fade(){
+  if(fading)return;const x0=xv(),from=x0<.5?0:1,to=1-from,inc=decks[to],out=decks[from];
+  if(!inc.ready||!out.ready)return;
+  fading=true;
+  if(inc.p.getPlayerState()!==1){inc.p.seekTo(0,true);inc.p.playVideo()}
+  const t0=Date.now(),ms=fadeSec()*1000;
+  clearInterval(fadeTimer);
+  fadeTimer=setInterval(()=>{
+    const k=Math.min(1,(Date.now()-t0)/ms);
+    xfEl.value=(x0+(to-x0)*k)*100;
+    if(k>=1){
+      clearInterval(fadeTimer);fading=false;
+      out.pendingPause=true;out.p.nextVideo();
+      setTimeout(()=>{if(out.pendingPause){out.pendingPause=false;out.p.pauseVideo()}},2500);
+    }
+  },100);
+}
+
+setInterval(()=>{
+  const x=xv();
+  decks.forEach((d,i)=>{
+    if(!d.ready||!d.p.getCurrentTime)return;
+    const cur=d.p.getCurrentTime()||0,dur=d.p.getDuration()||0;
+    if(dur&&document.activeElement!==d.q('.seek'))d.q('.seek').value=cur/dur*1000;
+    d.q('.time').textContent=fmt(cur)+' / '+fmt(dur);
+    const v=Math.round(d.vol*(i?Math.sin(x*Math.PI/2):Math.cos(x*Math.PI/2)));
+    if(v!==d.last){d.p.setVolume(v);d.last=v}
+  });
+  if(auto&&!fading){
+    const a=decks[x<.5?0:1];
+    if(a.ready&&a.p.getPlayerState()===1){
+      const dur=a.p.getDuration(),cur=a.p.getCurrentTime();
+      if(dur>0&&dur-cur<=fadeSec()+1)fade();
+    }
+  }
+},250);
+
+function parseList(s){
+  s=s.trim();
+  try{const l=new URL(s).searchParams.get('list');if(l)return l}catch(e){}
+  const m=s.match(/[?&]list=([\w-]+)/);if(m)return m[1];
+  return /^(PL|OL|UU|FL)[\w-]{10,}$/.test(s)?s:null;
+}
+function go(){
+  const id=parseList($('#url').value);
+  if(!id){$('#msg').textContent='У посиланні немає плейлиста. Скопіюйте адресу, де є «list=…».';return}
+  listId=id;$('#msg').textContent='Плейлист завантажено. Натисніть ▶ на деку A, потім «Плавно перейти».';
+  try{localStorage.setItem('djpl',$('#url').value)}catch(e){}
+  decks.forEach(d=>d.ready&&d.load());
+}
+$('#go').onclick=go;
+$('#mixbtn').onclick=fade;
+$('#auto').onclick=e=>{auto=!auto;e.target.classList.toggle('on',auto);e.target.setAttribute('aria-pressed',auto)};
+$('#fs').oninput=e=>{$('#fso').textContent=e.target.value+' с'};
+try{const s=localStorage.getItem('djpl');if(s)$('#url').value=s}catch(e){}
+
+decks.push(new Deck($('#da'),'Дек A','var(--a)',0),new Deck($('#db'),'Дек B','var(--b)',1));
+function attachAll(){decks.forEach(d=>d.p||d.attach())}
+function onYouTubeIframeAPIReady(){attachAll()}
+if(window.YT&&YT.Player)attachAll();
+function ytFail(){if(!(window.YT&&YT.Player))$('#msg').textContent='YouTube-плеєр не завантажився. Відкрийте сторінку з сайту (https://), а не з файлу чи попереднього перегляду.'}
+setTimeout(ytFail,6000);
+</script>
+<script src="https://www.youtube.com/iframe_api" onerror="ytFail()"></script>
+</body>
+</html>
